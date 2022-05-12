@@ -8,20 +8,19 @@ import {
     DialogTitle,
     TextField,
 } from '@material-ui/core';
-import { queryWebsoc } from '../../helpers';
+import { addCoursesMultiple, combineSOCObjects, getCourseInfo, queryWebsoc } from '../../helpers';
 import RightPaneStore from '../../stores/RightPaneStore';
-import { addCourse, openSnackbar } from '../../actions/AppStoreActions';
+import { openSnackbar } from '../../actions/AppStoreActions';
 import AppStore from '../../stores/AppStore';
 import { PostAdd } from '@material-ui/icons';
-import { termData } from '../../termData';
-import MenuItem from '@material-ui/core/MenuItem';
-import Select from '@material-ui/core/Select';
 import InputLabel from '@material-ui/core/InputLabel';
 import { withStyles } from '@material-ui/core/styles';
+import TermSelector from '../SearchForm/TermSelector';
+import analyticsEnum, { logAnalytics } from '../../analytics';
 
 const styles = {
-    input: {
-        'margin-top': '10px',
+    inputLabel: {
+        'font-size': '9px',
     },
 };
 
@@ -30,6 +29,10 @@ class ImportStudyList extends PureComponent {
         isOpen: false,
         selectedTerm: RightPaneStore.getFormData().term,
         studyListText: '',
+    };
+
+    onTermSelectorChange = (field, value) => {
+        this.setState({ [field]: value });
     };
 
     handleChange = (event) => {
@@ -55,36 +58,37 @@ class ImportStudyList extends PureComponent {
                     return;
                 }
                 const currSchedule = AppStore.getCurrentScheduleIndex();
-                let sectionsAdded = 0;
                 try {
-                    (
-                        await Promise.all(
-                            sectionCodes
-                                .reduce((result, item, index) => {
-                                    // WebSOC queries can have a maximum of 10 course codes in tandem
-                                    const chunkIndex = Math.floor(index / 10);
-                                    result[chunkIndex] ? result[chunkIndex].push(item) : (result[chunkIndex] = [item]);
-                                    return result;
-                                }, []) // https://stackoverflow.com/a/37826698
-                                .map((sectionCode) =>
-                                    queryWebsoc({ term: this.state.selectedTerm, sectionCodes: sectionCode.join(',') })
+                    const sectionsAdded = addCoursesMultiple(
+                        getCourseInfo(
+                            combineSOCObjects(
+                                await Promise.all(
+                                    sectionCodes
+                                        .reduce((result, item, index) => {
+                                            // WebSOC queries can have a maximum of 10 course codes in tandem
+                                            const chunkIndex = Math.floor(index / 10);
+                                            result[chunkIndex]
+                                                ? result[chunkIndex].push(item)
+                                                : (result[chunkIndex] = [item]);
+                                            return result;
+                                        }, []) // https://stackoverflow.com/a/37826698
+                                        .map((sectionCode) =>
+                                            queryWebsoc({
+                                                term: this.state.selectedTerm,
+                                                sectionCodes: sectionCode.join(','),
+                                            })
+                                        )
                                 )
-                        )
-                    )
-                        // TODO refactor to use helper function for extracting course info from WebSOC query
-                        .forEach((response) => {
-                            response.schools
-                                .map((school) => school.departments)
-                                .flat()
-                                .map((dept) => dept.courses)
-                                .flat()
-                                .forEach((course) => {
-                                    course.sections.forEach((section) => {
-                                        addCourse(section, course, this.state.selectedTerm, currSchedule);
-                                        ++sectionsAdded;
-                                    });
-                                });
-                        });
+                            )
+                        ),
+                        this.state.selectedTerm,
+                        currSchedule
+                    );
+                    logAnalytics({
+                        category: analyticsEnum.nav.title,
+                        action: analyticsEnum.nav.actions.IMPORT_STUDY_LIST,
+                        value: sectionsAdded / (sectionCodes.length || 1),
+                    });
                     if (sectionsAdded === sectionCodes.length) {
                         openSnackbar('success', `Successfully imported ${sectionsAdded} of ${sectionsAdded} classes!`);
                     } else if (sectionsAdded !== 0) {
@@ -144,32 +148,20 @@ class ImportStudyList extends PureComponent {
                             Study List once you've logged in. Copy everything below the column names (Code, Dept, etc.)
                             under the Enrolled Classes section.
                         </DialogContentText>
-                        <div className={classes.input}>
-                            <InputLabel>Study List</InputLabel>
-                            <TextField
-                                autoFocus
-                                fullWidth
-                                multiline
-                                margin="dense"
-                                type="text"
-                                placeholder="Paste here"
-                                value={this.state.studyListText}
-                                onChange={(event) => this.setState({ studyListText: event.target.value })}
-                            />
-                        </div>
+                        <InputLabel className={classes.inputLabel}>Study List</InputLabel>
+                        <TextField
+                            autoFocus
+                            fullWidth
+                            multiline
+                            margin="dense"
+                            type="text"
+                            placeholder="Paste here"
+                            value={this.state.studyListText}
+                            onChange={(event) => this.setState({ studyListText: event.target.value })}
+                        />
                         <br />
                         <DialogContentText>Make sure you also have the right term selected.</DialogContentText>
-                        {/* TODO refactor to use a modified TermSelector */}
-                        <div className={classes.input}>
-                            <InputLabel>Term</InputLabel>
-                            <Select value={this.state.selectedTerm} onChange={this.handleChange}>
-                                {termData.map((term, index) => (
-                                    <MenuItem key={index} value={term.shortName}>
-                                        {term.longName}
-                                    </MenuItem>
-                                ))}
-                            </Select>
-                        </div>
+                        <TermSelector changeState={this.onTermSelectorChange} fieldName={'selectedTerm'} />
                     </DialogContent>
                     <DialogActions>
                         <Button onClick={() => this.handleClose(false)} color="primary">

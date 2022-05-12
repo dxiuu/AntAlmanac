@@ -1,3 +1,4 @@
+import AppStore from '../../stores/AppStore';
 import React, { PureComponent } from 'react';
 import PropTypes from 'prop-types';
 import { Popover, IconButton } from '@material-ui/core';
@@ -5,6 +6,7 @@ import { SketchPicker } from 'react-color';
 import { changeCourseColor, changeCustomEventColor } from '../../actions/AppStoreActions';
 import { ColorLens } from '@material-ui/icons';
 import ReactGA from 'react-ga';
+import analyticsEnum, { logAnalytics } from '../../analytics';
 
 class ColorPicker extends PureComponent {
     state = {
@@ -39,6 +41,28 @@ class ColorPicker extends PureComponent {
             category: 'antalmanac-rewrite',
             action: 'Change Course Color',
         });
+        logAnalytics({
+            category: this.props.analyticsCategory || 'Right Pane',
+            action: analyticsEnum.calendar.actions.CHANGE_COURSE_COLOR,
+        });
+    };
+    updateColor = (color) => {
+        if (color !== this.props.color) {
+            this.setState({ color: color });
+        }
+    };
+
+    componentDidMount = () => {
+        AppStore.registerColorPicker(
+            this.props.isCustomEvent ? this.props.customEventID : this.props.sectionCode,
+            this.updateColor
+        );
+    };
+    componentWillUnmount = () => {
+        AppStore.unregisterColorPicker(
+            this.props.isCustomEvent ? this.props.customEventID : this.props.sectionCode,
+            this.updateColor
+        );
     };
 
     render() {

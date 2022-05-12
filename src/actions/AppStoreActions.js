@@ -1,6 +1,7 @@
 import dispatcher from '../dispatcher';
 import AppStore from '../stores/AppStore';
 import ReactGA from 'react-ga';
+import analyticsEnum, { logAnalytics } from '../analytics';
 import {
     amber,
     blue,
@@ -16,7 +17,7 @@ import {
     red,
     teal,
 } from '@material-ui/core/colors';
-import { getCoursesData } from '../helpers';
+import { getCoursesData, termsInSchedule, warnMultipleTerms } from '../helpers';
 import { LOAD_DATA_ENDPOINT, SAVE_DATA_ENDPOINT } from '../api/endpoints';
 
 const arrayOfColors = [
@@ -35,15 +36,12 @@ const arrayOfColors = [
     blueGrey[500],
 ];
 
-export const addCourse = (section, courseDetails, term, scheduleIndex, color) => {
+export const addCourse = (section, courseDetails, term, scheduleIndex, color, quiet) => {
     const addedCourses = AppStore.getAddedCourses();
-
+    const terms = termsInSchedule(addedCourses, term, scheduleIndex);
     let existingCourse;
-    let multipleTerms = new Set([term]);
 
     for (const course of addedCourses) {
-        multipleTerms.add(course.term);
-
         if (course.section.sectionCode === section.sectionCode && term === course.term) {
             existingCourse = course;
             if (course.scheduleIndices.includes(scheduleIndex)) {
@@ -54,16 +52,7 @@ export const addCourse = (section, courseDetails, term, scheduleIndex, color) =>
         }
     }
 
-    if (multipleTerms.size > 1)
-        openSnackbar(
-            'warning',
-            `Course added from different term.\nSchedule now contains courses from ${[...multipleTerms]
-                .sort()
-                .join(', ')}.`,
-            null,
-            null,
-            { whiteSpace: 'pre-line' }
-        );
+    if (terms.size > 1 && !quiet) warnMultipleTerms(terms);
 
     if (color === undefined) {
         const setOfUsedColors = new Set(addedCourses.map((course) => course.color));
@@ -98,7 +87,11 @@ export const addCourse = (section, courseDetails, term, scheduleIndex, color) =>
     }
     return color;
 };
-
+/**
+ * @param variant usually 'info', 'error', 'warning', or 'success'
+ * @param message any string to display
+ * @param duration in seconds and is optional.
+ */
 export const openSnackbar = (variant, message, duration, position, style) => {
     dispatcher.dispatch({
         type: 'OPEN_SNACKBAR',
@@ -111,6 +104,12 @@ export const openSnackbar = (variant, message, duration, position, style) => {
 };
 
 export const saveSchedule = async (userID, rememberMe) => {
+    logAnalytics({
+        category: analyticsEnum.nav.title,
+        action: analyticsEnum.nav.actions.SAVE_SCHEDULE,
+        label: userID,
+        value: rememberMe,
+    });
     if (userID != null) {
         userID = userID.replace(/\s+/g, '');
 
@@ -160,6 +159,12 @@ export const saveSchedule = async (userID, rememberMe) => {
 };
 
 export const loadSchedule = async (userID, rememberMe) => {
+    logAnalytics({
+        category: analyticsEnum.nav.title,
+        action: analyticsEnum.nav.actions.LOAD_SCHEDULE,
+        label: userID,
+        value: rememberMe,
+    });
     if (
         userID != null &&
         (!AppStore.hasUnsavedChanges() ||
@@ -326,6 +331,8 @@ export const changeCustomEventColor = (customEventID, newColor) => {
     dispatcher.dispatch({
         type: 'CUSTOM_EVENT_COLOR_CHANGE',
         customEventsAfterColorChange,
+        customEventID,
+        newColor,
     });
 };
 
@@ -343,6 +350,8 @@ export const changeCourseColor = (sectionCode, newColor, term) => {
     dispatcher.dispatch({
         type: 'COURSE_COLOR_CHANGE',
         addedCoursesAfterColorChange,
+        sectionCode,
+        newColor,
     });
 };
 
@@ -396,5 +405,10 @@ export const toggleTheme = (radioGroupEvent) => {
     ReactGA.event({
         category: 'antalmanac-rewrite',
         action: 'toggle theme',
+    });
+    logAnalytics({
+        category: analyticsEnum.nav.title,
+        action: analyticsEnum.nav.actions.CHANGE_THEME,
+        label: radioGroupEvent.target.value,
     });
 };

@@ -1,4 +1,4 @@
-import { openSnackbar } from './actions/AppStoreActions';
+import { addCourse, openSnackbar } from './actions/AppStoreActions';
 import { PETERPORTAL_WEBSOC_ENDPOINT, WEBSOC_ENDPOINT } from './api/endpoints';
 import AppStore from './stores/AppStore';
 
@@ -37,30 +37,42 @@ export async function getCoursesData(userData) {
 
             const jsonResp = await queryWebsoc(params);
 
-            for (const school of jsonResp.schools) {
-                for (const department of school.departments) {
-                    for (const course of department.courses) {
-                        for (const section of course.sections) {
-                            addedCourses.push({
-                                ...sectionCodeToInfoMapping[section.sectionCode],
-                                deptCode: department.deptCode,
-                                courseNumber: course.courseNumber,
-                                courseTitle: course.courseTitle,
-                                courseComment: course.courseComment,
-                                prerequisiteLink: course.prerequisiteLink,
-                                section: section,
-                            });
-                        }
-                    }
-                }
+            for (const [sectionCode, courseData] of Object.entries(getCourseInfo(jsonResp))) {
+                addedCourses.push({
+                    ...sectionCodeToInfoMapping[sectionCode],
+                    ...courseData.courseDetails,
+                    section: courseData.section,
+                });
             }
         }
     }
-
     return {
         addedCourses: addedCourses,
         customEvents: userData.customEvents,
     };
+}
+
+export function getCourseInfo(SOCObject) {
+    let courseInfo = {};
+    for (const school of SOCObject.schools) {
+        for (const department of school.departments) {
+            for (const course of department.courses) {
+                for (const section of course.sections) {
+                    courseInfo[section.sectionCode] = {
+                        courseDetails: {
+                            deptCode: department.deptCode,
+                            courseNumber: course.courseNumber,
+                            courseTitle: course.courseTitle,
+                            courseComment: course.courseComment,
+                            prerequisiteLink: course.prerequisiteLink,
+                        },
+                        section: section,
+                    };
+                }
+            }
+        }
+    }
+    return courseInfo;
 }
 
 const websocCache = {};
@@ -73,7 +85,8 @@ export async function queryWebsoc(params) {
     // Construct a request to PeterPortal with the params as a query string
     const url = new URL(PETERPORTAL_WEBSOC_ENDPOINT);
     const searchString = new URLSearchParams(params).toString();
-    if (websocCache[searchString]) {
+    if (websocCache[searchString]?.timestamp > Date.now() - 30 * 60 * 1000) {
+        //if cache hit and less than 30 minutes old
         return websocCache[searchString];
     }
     url.search = searchString;
@@ -89,6 +102,8 @@ export async function queryWebsoc(params) {
         }).then((res) => res.json());
         websocCache[searchString] = backupResponse;
         return backupResponse;
+    } finally {
+        websocCache[searchString].timestamp = Date.now();
     }
 }
 
@@ -139,6 +154,33 @@ export async function queryWebsocMultiple(params, fieldName) {
     }
     return combineSOCObjects(responses);
 }
+
+export const addCoursesMultiple = (courseInfo, term, scheduleIndex) => {
+    let sectionsAdded = 0;
+    for (const section of Object.values(courseInfo)) {
+        addCourse(section.section, section.courseDetails, term, scheduleIndex, undefined, true);
+        ++sectionsAdded;
+    }
+    const terms = termsInSchedule(AppStore.getAddedCourses(), term, scheduleIndex);
+    if (terms.size > 1) warnMultipleTerms(terms);
+    return sectionsAdded;
+};
+
+export const termsInSchedule = (courses, term, scheduleIndex) =>
+    new Set([
+        term,
+        ...courses.filter((course) => course.scheduleIndices.includes(scheduleIndex)).map((course) => course.term),
+    ]);
+
+export const warnMultipleTerms = (terms) => {
+    openSnackbar(
+        'warning',
+        `Course added from different term.\nSchedule now contains courses from ${[...terms].sort().join(', ')}.`,
+        null,
+        null,
+        { whiteSpace: 'pre-line' }
+    );
+};
 
 export function clickToCopy(event, sectionCode) {
     event.stopPropagation();
